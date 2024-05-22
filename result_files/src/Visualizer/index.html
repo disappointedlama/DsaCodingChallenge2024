@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/light.css">
+    <style>
+        .active {
+            background-color: var(--focus) !important;
+            color: white;
+        }
+
+        svg {
+            border: 1px solid #ccc;
+        }
+    </style>
+</head>
+
+<body style="margin-left: 0px; margin-right: 0px; max-width: 100vw; overflow-x: hidden;">
+
+    <div id="app">
+        <canvas id="myChart" style="width: 100vw; height: 95vh;"></canvas>
+        <div class="buttonList">
+            <button v-for="(val, dataKey) in data" :key="dataKey"
+                @click="currentData = dataKey; updateChart(dataKey)" :class="{active: currentData === dataKey}">
+                {{ dataKey }}
+            </button>
+        </div>
+    </div>
+
+
+    <script>
+        const { createApp, ref } = Vue
+
+        const myChart = document.getElementById('myChart')
+        myChart.width = myChart.clientWidth
+        myChart.height = myChart.clientHeight
+
+
+        createApp({
+            setup() {
+                const data = ref({})
+                const inputFilesData = ref({})
+                const currentData = ref("")
+
+                var ws = new WebSocket('ws://localhost:3123');    // event emmited when connected
+                ws.onopen = function () {
+                    console.log('websocket is connected ...')        // sending a send event to websocket server
+                    ws.send('connected')
+                }    // event emmited when receiving message 
+                ws.onmessage = function (ev) {
+                    var tempData = JSON.parse(ev.data)
+                    data.value = tempData.data
+                    inputFilesData.value = tempData.inputFilesData
+                    if (data.value[currentData.value] === undefined) {
+                        currentData.value = ""
+                    }
+                    updateChart(currentData.value)
+                }
+
+                function updateChart(key) {
+                    if (key === "") return
+                    console.log("update ", key)
+                    const decodedData = decodeDate(key)
+                    console.log(decodedData)
+                    var maxX = Math.max(...decodedData.map(d => d.x))
+                    var maxY = Math.max(...decodedData.map(d => d.y))
+                    var minX = Math.min(...decodedData.map(d => d.x))
+                    var minY = Math.min(...decodedData.map(d => d.y))
+
+                    const canvas = document.getElementById('myChart')
+                    const ctx = canvas.getContext('2d')
+
+                    var margin = Math.max(...decodedData.map(d => d.r)) * 2
+
+                    minX = Number(minX) - margin
+                    minY = Number(minY) - margin
+                    maxX = Number(maxX) + margin
+                    maxY = Number(maxY) + margin
+
+                    var divX = Math.abs(maxX - minX)
+                    var divY = Math.abs(maxY - minY)
+
+                    var scaleX = (canvas.width) / divX
+                    var scaleY = (canvas.height) / divY
+                    var scale = Math.min(scaleX, scaleY)
+
+                    ctx.clearRect(0, 0, canvas.width, canvas.height)
+                    margin = 0;
+
+                    var posSaveMap = []
+
+                    for (d of decodedData) {
+                        //console.log(Math.abs(minX), d.x)
+                        var x = (-Number(minX) + Number(d.x)) * scale
+                        var y = canvas.height - ((-Number(minY) + Number(d.y)) * scale);
+
+                        posSaveMap[d.name] = [x, y]
+                    }
+                    if (inputFilesData.value[currentData.value]) {
+                        for (l of inputFilesData.value[currentData.value]) {
+                            if (posSaveMap[l[0]] == undefined || posSaveMap[l[1]] == undefined) continue
+                            var x1 = posSaveMap[l[0]][0]
+                            var y1 = posSaveMap[l[0]][1]
+                            var x2 = posSaveMap[l[1]][0]
+                            var y2 = posSaveMap[l[1]][1]
+
+                            ctx.beginPath()
+                            ctx.moveTo(x1, y1)
+                            ctx.lineTo(x2, y2)
+                            ctx.strokeStyle = "#a1a1a160"
+                            ctx.stroke()
+                        }
+                    }
+
+
+                    for (d of decodedData) {
+                        //console.log(Math.abs(minX), d.x)
+                        var x = (-Number(minX) + Number(d.x)) * scale
+                        var y = canvas.height - ((-Number(minY) + Number(d.y)) * scale);
+
+                        ctx.beginPath()
+                        ctx.arc(x, y, d.r * scale, 0, 2 * Math.PI)
+                        ctx.fillStyle = "#" + genColor(d.id) + '80'
+                        ctx.fill()
+                        ctx.stroke()
+                        ctx.font = "15px Arial"
+                        if (hexToHSL('#' + genColor(d.id)).l > 0.5) {
+                            ctx.fillStyle = "#" + LightenDarkenColor(genColor(d.id), -80)
+                        } else {
+                            ctx.fillStyle = "#" + LightenDarkenColor(genColor(d.id), 80)
+                        }
+                        ctx.fillText(d.name, x + 10, y - 10)
+                        ctx.stroke()
+
+                    }
+
+
+                }
+
+
+
+
+                function decodeDate(key) {
+                    var res = []
+                    var dataTmp = data.value[key].split(/\r?\n/)
+                    for (d of dataTmp) {
+                        if (d === "" || d.startsWith('#')) continue
+                        var tmp = d.split(" ")
+                        res.push({
+                            x: tmp[0],
+                            y: tmp[1],
+                            r: tmp[2],
+                            name: tmp[3],
+                            id: tmp[4],
+                        })
+                    }
+
+                    return res
+                }
+
+
+
+                return {
+                    data,
+                    currentData,
+                    updateChart
+                }
+            },
+            mounted: function () {
+
+            }
+        }).mount('#app')
+
+
+        function LightenDarkenColor(col, amt) {
+            var num = parseInt(col, 16);
+            var r = (num >> 16) + amt;
+            var b = ((num >> 8) & 0x00FF) + amt;
+            var g = (num & 0x0000FF) + amt;
+            var newColor = g | (b << 8) | (r << 16);
+            return newColor.toString(16);
+        }
+
+        function hexToHSL(hex) {
+            var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            r = parseInt(result[1], 16);
+            g = parseInt(result[2], 16);
+            b = parseInt(result[3], 16);
+            r /= 255, g /= 255, b /= 255;
+            var max = Math.max(r, g, b), min = Math.min(r, g, b);
+            var h, s, l = (max + min) / 2;
+            if (max == min) {
+                h = s = 0; // achromatic
+            } else {
+                var d = max - min;
+                s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+                switch (max) {
+                    case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+                    case g: h = (b - r) / d + 2; break;
+                    case b: h = (r - g) / d + 4; break;
+                }
+                h /= 6;
+            }
+            var HSL = new Object();
+            HSL['h'] = h;
+            HSL['s'] = s;
+            HSL['l'] = l;
+            return HSL;
+        }
+
+
+
+        function genColor(seed) {
+            color = Math.floor((Math.abs(Math.sin(seed) * 16777215)));
+            color = color.toString(16);
+            // pad any colors shorter than 6 characters with leading 0s
+            while (color.length < 6) {
+                color = '0' + color;
+            }
+
+            return color;
+        }
+
+    </script>
+</body>
+
+</html>
